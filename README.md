@@ -194,3 +194,220 @@ Gitbook 地址：https://labuladong.gitbook.io/algo/
 如果本仓库对你有帮助，可以请作者喝杯速溶咖啡
 
 <img src="pictures/pay.jpg" width = "200" align=center />
+With main As ( 
+  SELECT
+    CTM.main_id
+    , CTM.task_no
+    , CTM.main_task_flg
+    , CTM.business_cd
+    , MAX(task_sub_no) AS task_sub_no 
+  FROM
+    tb_wlt_create_task_mng CTM 
+  WHERE
+    CTM.main_id = '0000151573' 
+  GROUP BY
+    CTM.main_id
+    , CTM.task_no
+    , business_cd
+    , CTM.main_task_flg
+) 
+, CTM As ( 
+  Select
+    CTM.task_no
+    , CTM.task_sub_no
+    , CTM.title
+    , CTM.delivery_id
+    , CTM.working_time
+    , CTM.delivery_unit
+    , CTM.business_cd
+    , CTM.end_date
+    , CTM.effectivedate
+    , CTM.delivery_date
+    , CTM.main_task_flg 
+  From
+    tb_wlt_create_task_mng CTM Join main 
+      On main.task_no = CTM.task_no 
+      And CTM.task_sub_no = main.task_sub_no
+) 
+, typeDiv As ( 
+  SELECT
+    CTT.task_no
+    , string_agg(tcm.code_name, '/') typeDivCd 
+  FROM
+    tb_wlt_create_task_type CTT Join CTM 
+      On CTM.task_no = CTT.task_no Join tb_wlt_table_code_mst tcm 
+      On CTT.type = tcm.code 
+      AND tcm.category_cd = '320' 
+  GROUP BY
+    CTT.task_no
+) 
+, Delivery As ( 
+  SELECT
+    DTD.delivery_id
+    , Case CTM.delivery_unit 
+      When '00' Then shopcd 
+      When '01' Then mail_to 
+      End delivery_to 
+  FROM
+    tb_wlt_delivery_task_def DTD Join CTM 
+      On CTM.delivery_id = DTD.delivery_id 
+      And DTD.mail_type = 'To' 
+  Group by
+    DTD.delivery_id
+    , Case CTM.delivery_unit 
+      When '00' Then shopcd 
+      When '01' Then mail_to 
+      End
+) 
+SELECT
+  --  json_agg(
+  --    json_build_array(
+  task_no2
+  , code
+  , code_name
+  , delivery_date
+  , end_date
+  , working_time
+  , title
+  , business_cd
+  , send_to
+  , delivery_unit
+  , code_name2
+  , typeDivCd
+  , department_nm
+  , end_date2
+  , effectivedate2
+  , delivery_date2
+  , repeat_flg
+  , management_flg
+  , main_task_flg
+  , task_no                                       --    )
+  --  )
+FROM
+  ( 
+    SELECT DISTINCT
+      replace (CTM.task_no, 'WORK', '0000') task_no2
+      , statusTbl.code
+      , statusTbl.code_name
+      , TO_CHAR(CTM.delivery_date, 'yyyy/mm/dd hh24:mi') delivery_date
+      , TO_CHAR(CTM.end_date, 'yyyy/mm/dd hh24:mi') end_date
+      , CTM.working_time
+      , replace (CTM.title, '<', '&lt;') title
+      , CTM.business_cd
+      , CASE CTM.delivery_unit 
+        WHEN '01' THEN ( 
+          Select
+            staff_nm 
+          From
+            tb_wlt_mst_staff_alldata 
+          Where
+            Delivery.delivery_to = crew_cd 
+          Limit
+            1
+        ) 
+        WHEN '00' THEN ( 
+          Select
+            shop_nm 
+          From
+            tb_wlt_mst_shop 
+          Where
+            Delivery.delivery_to = shop_cd 
+          Limit
+            1
+        ) 
+        ELSE '' 
+        END send_to
+      , CTM.delivery_unit
+      , duCdMst.code_name code_name2
+      , typeDiv.typeDivCd
+      , CASE 
+      WHEN STAFF1.DEPARTMENT_NM IS NOT NULL AND STAFF1.DEPARTMENT_NM != '' 
+      THEN STAFF1.DEPARTMENT_NM 
+      WHEN STAFF2.DEPARTMENT_NM IS NOT NULL AND STAFF2.DEPARTMENT_NM != '' 
+      THEN STAFF2.DEPARTMENT_NM 
+        END AS department_nm
+      , TO_CHAR(CTM.end_date, 'yyyy/mm/dd hh24:mi:ss') end_date2
+      , TO_CHAR(CTM.effectivedate, 'yyyy/mm/dd hh24:mi:ss') effectivedate2
+      , TO_CHAR(CTM.delivery_date, 'yyyy/mm/dd hh24:mi:ss') delivery_date2
+      , twtlc.repeat_flg
+      , CTA.management_flg
+      , CTM.main_task_flg
+      , CTM.task_no 
+    FROM
+      CTM Join tb_wlt_task_loop_condition twtlc ON CTM.task_no = twtlc.task_no 
+		Join tb_wlt_create_task_admit CTA ON CTM.task_no = CTA.task_no And CTA.admit_status = '020' 
+      LEFT JOIN TB_WLT_MST_STAFF_ALLDATA AS STAFF1 
+        ON CTA.apply_user = STAFF1.CREW_CD 
+        AND STAFF1.SHOP_TYPE = 'm' 
+        AND CASE 
+          WHEN CTA.management_flg = '1' 
+          THEN True 
+          ELSE STAFF1.auth IN ('020') 
+          END 
+      LEFT JOIN TB_WLT_MST_STAFF_ALLDATA AS STAFF2 
+        ON CTA.apply_user = STAFF2.CREW_CD 
+        AND ( 
+          STAFF2.SHOP_TYPE IS NULL 
+          OR STAFF2.SHOP_TYPE != 'm'
+        ) 
+        AND CASE 
+          WHEN CTA.management_flg = '1' 
+          THEN True 
+          ELSE STAFF2.auth IN ('020') 
+          END 
+      Left Join typeDiv 
+        ON typeDiv.task_no = CTM.task_no 
+      Left Join Delivery 
+        On CTM.delivery_id = Delivery.delivery_id Join tb_wlt_table_code_mst statusTbl 
+        On statusTbl.category_cd = '130' 
+        And CTA.admit_status = statusTbl.code 
+      Left Join tb_wlt_table_code_mst duCdMst 
+        On duCdMst.category_cd = '140' 
+        And CTM.delivery_unit = duCdMst.code 
+      Left Join tb_wlt_delivery_task_def DTD 
+        ON Delivery.delivery_id = DTD.delivery_id 
+        And DTD.mail_type = 'To' 
+      Left Join tb_wlt_mst_admit_mng MAM 
+        On MAM.admit_cd = '3019990002' 
+        And CTA.apply_user = MAM.crew_cd 
+      Left Join tb_wlt_mst_auth twma 
+        On twma.conf_type = '03' 
+        And twma.scr_cont1 = '1' 
+    WHERE
+      Exists ( 
+        SELECT
+          1 
+        FROM
+          tb_wlt_mst_staff_alldata 
+        WHERE
+          CTA.apply_user = crew_cd
+      ) 
+      AND Case 
+        When CTA.management_flg = '1' 
+        Then Exists ( 
+          SELECT
+            1 
+          FROM
+            tb_wlt_mst_staff_alldata 
+          WHERE
+            '3019990002' in ( 
+              management_crew_cd_1
+              , management_crew_cd_2
+              , management_crew_cd_3
+              , management_crew_cd_4
+              , management_crew_cd_5
+            )                                     
+		And employment_type in ('4', '5')
+            And DTD.mail_to = crew_cd
+        ) 
+        Else Exists ( 
+          SELECT
+            1 
+          FROM
+            tb_wlt_mst_staff_alldata STAFF 
+          WHERE
+            STAFF.crew_cd = MAM.admit_cd 
+            AND STAFF.auth = twma.auth_cd
+        ) 
+        End
+  ) RT
